@@ -1,6 +1,6 @@
 # Working on kgr-memory
 
-Griffith University project. Full spec is in [README.md](README.md). Follow this file when writing or changing code.
+Griffith University project. Full spec is in [README.md](README.md). If you are picking this up, start with [HANDOVER.md](HANDOVER.md). Follow this file when writing or changing code.
 
 ## Principle
 
@@ -24,7 +24,7 @@ Do not start a later module until the earlier one has a working baseline.
 2. **Knowledge graph** — `gpt-4o-mini` extracts triples into SQLite nodes/edges (negation = `not_*`); query is vector-seeded then 1-hop; print two lists, do not merge
 3. **Multi-turn memory query** — agent queries both stores in a loop; LLM scores whether it has enough (e.g. 1–10) and stops; hard max-round cap
 
-Memory is local. Populate from conversation or a benchmark later. Design decisions in the README may change; do not freeze abstractions around them.
+Memory is local. Populate from conversation or a benchmark later. Design decisions live in [log.md](log.md) and [README.md](README.md); do not freeze abstractions around them.
 
 Each module may be extended after its baseline exists. Do not skip ahead to make the later module "ready".
 
@@ -38,6 +38,12 @@ Each module may be extended after its baseline exists. Do not skip ahead to make
 - Prefer one clear data path over abstractions "for later"
 - Keep the three modules separable so they can be understood alone
 - Latency vs accuracy is an explicit tradeoff; do not hide extra retrieval rounds
+
+## Git
+
+- Do not add `Co-authored-by` (or any Cursor/agent trailer) to commits
+- Commit as the repo author only
+- After a commit, if a trailer was injected, strip it before pushing
 
 ## Target behaviour
 
