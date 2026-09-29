@@ -87,6 +87,27 @@ def _merge(existing: list[Fact], new: list[Fact]) -> list[Fact]:
     return out
 
 
+def _stop_or_continue(
+    decision: Decision,
+    *,
+    round_n: int,
+    cap: int,
+    sent: list[str],
+    question: str,
+    facts: list[Fact],
+    answer: AnswerFn,
+) -> tuple[str | None, str | None, str | None]:
+    """Return (final_answer, stop_reason, next_query). Continue when all three are unset except next_query."""
+    if decision.enough or round_n == cap:
+        text = decision.answer or answer(question, facts)
+        return text, ("enough" if decision.enough else "cap"), None
+    nxt = (decision.next_query or "").strip()
+    if not nxt or nxt in sent:
+        text = decision.answer or answer(question, facts)
+        return text, "no_new_query", None
+    return None, None, nxt
+
+
 def ask_react(
     question: str,
     search: SearchFn,
@@ -118,21 +139,70 @@ def ask_react(
                 next_query=decision.next_query,
             )
         )
-        if decision.enough:
-            result.answer = decision.answer or answer(question, facts)
-            result.stopped_because = "enough"
+        final, reason, nxt = _stop_or_continue(
+            decision,
+            round_n=n,
+            cap=max_rounds,
+            sent=sent,
+            question=question,
+            facts=facts,
+            answer=answer,
+        )
+        if reason:
+            result.answer = final or ""
+            result.stopped_because = reason
             return result
-        if n == max_rounds:
-            result.answer = decision.answer or answer(question, facts)
-            result.stopped_because = "cap"
-            return result
-        nxt = (decision.next_query or "").strip()
-        if not nxt or nxt in sent:
-            result.answer = decision.answer or answer(question, facts)
-            result.stopped_because = "no_new_query"
-            return result
-        query = nxt
+        query = nxt or query
 
+    result.answer = answer(question, facts)
+    result.stopped_because = "cap"
+    return result
+
+
+async def ask_react_async(
+    question: str,
+    search,
+    decide: DecideFn,
+    answer: AnswerFn,
+    *,
+    prompt_name: str = DEFAULT_PROMPT,
+    max_rounds: int = MAX_ROUNDS,
+) -> AskResult:
+    """Same stop rules as ask_react. search is async and returns (facts, seconds)."""
+    system_prompt(prompt_name)
+    result = AskResult(question=question, prompt_name=prompt_name, mode="react", answer="")
+    facts: list[Fact] = []
+    query = question
+    sent: list[str] = []
+    for n in range(1, max_rounds + 1):
+        found, seconds = await search(query)
+        facts = _merge(facts, found)
+        sent.append(query)
+        decision = decide(question, facts, prompt_name, sent)
+        result.rounds.append(
+            RoundLog(
+                round=n,
+                query=query,
+                facts=list(found),
+                search_seconds=seconds,
+                enough=decision.enough,
+                next_query=decision.next_query,
+            )
+        )
+        final, reason, nxt = _stop_or_continue(
+            decision,
+            round_n=n,
+            cap=max_rounds,
+            sent=sent,
+            question=question,
+            facts=facts,
+            answer=answer,
+        )
+        if reason:
+            result.answer = final or ""
+            result.stopped_because = reason
+            return result
+        query = nxt or query
     result.answer = answer(question, facts)
     result.stopped_because = "cap"
     return result

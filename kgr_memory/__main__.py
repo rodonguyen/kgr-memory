@@ -255,12 +255,19 @@ def _graphiti_command(args) -> None:
                     stopped_because="oneshot",
                 )
             else:
-                result = await _ask_react_async(
-                    graphiti,
+                from kgr_memory.live import decide_live
+                from kgr_memory.react import ask_react_async
+
+                async def search(query: str):
+                    return await search_facts(graphiti, query, args.group)
+
+                result = await ask_react_async(
                     args.text,
-                    args.group,
-                    args.prompt,
-                    args.max_rounds,
+                    search,
+                    decide_live,
+                    answer_live,
+                    prompt_name=args.prompt,
+                    max_rounds=args.max_rounds,
                 )
             print(result.answer)
             print(
@@ -280,50 +287,6 @@ def _graphiti_command(args) -> None:
             await graphiti.close()
 
     asyncio.run(run())
-
-
-async def _ask_react_async(graphiti, question, group_id, prompt_name, max_rounds):
-    from kgr_memory.graphiti_memory import search_facts
-    from kgr_memory.live import answer_live, decide_live
-    from kgr_memory.react import MAX_ROUNDS, AskResult, RoundLog, _merge
-
-    result = AskResult(
-        question=question, prompt_name=prompt_name, mode="react", answer=""
-    )
-    facts = []
-    query = question
-    sent: list[str] = []
-    cap = max_rounds or MAX_ROUNDS
-    for n in range(1, cap + 1):
-        found, seconds = await search_facts(graphiti, query, group_id)
-        facts = _merge(facts, found)
-        sent.append(query)
-        decision = decide_live(question, facts, prompt_name, sent)
-        result.rounds.append(
-            RoundLog(
-                round=n,
-                query=query,
-                facts=list(found),
-                search_seconds=seconds,
-                enough=decision.enough,
-                next_query=decision.next_query,
-            )
-        )
-        if decision.enough:
-            result.answer = decision.answer or answer_live(question, facts)
-            result.stopped_because = "enough"
-            return result
-        if n == cap:
-            result.answer = decision.answer or answer_live(question, facts)
-            result.stopped_because = "cap"
-            return result
-        nxt = (decision.next_query or "").strip()
-        if not nxt or nxt in sent:
-            result.answer = decision.answer or answer_live(question, facts)
-            result.stopped_because = "no_new_query"
-            return result
-        query = nxt
-    return result
 
 
 if __name__ == "__main__":

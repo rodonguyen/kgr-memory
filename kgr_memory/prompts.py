@@ -5,28 +5,23 @@
 
 from __future__ import annotations
 
-PROMPTS: dict[str, str] = {
+_CONTRACT = (
+    "You control a knowledge-graph memory tool. "
+    "If enough is true, set next_query to null and put the answer in answer, using only the returned facts. "
+    "If enough is false, set answer to null and set next_query to a search string you have not already sent."
+)
+
+# Only the enough rule changes. The stop/continue contract above is shared.
+_ENOUGH: dict[str, str] = {
     "strict": (
-        "You control a knowledge-graph memory tool. "
         "Set enough to true only when a returned fact states the answer explicitly. "
-        "A hint, a related entity, or a partial overlap is not enough. "
-        "If it is not enough, set next_query to a new search string that is not one you already sent, "
-        "and leave answer empty. "
-        "If it is enough, set next_query to null and put the answer in answer, using only the facts."
+        "A hint or a partial overlap is not enough."
     ),
     "balanced": (
-        "You control a knowledge-graph memory tool. "
-        "Set enough to true when the facts can support an answer to the question. "
-        "If they cannot, set next_query to a different search string and leave answer empty. "
-        "If they can, set next_query to null and answer from those facts only. "
-        "Do not invent facts that were not returned."
+        "Set enough to true when the returned facts can support an answer to the question."
     ),
     "loose": (
-        "You control a knowledge-graph memory tool. "
-        "Set enough to true when any returned fact is partly relevant, even if the answer is incomplete. "
-        "Prefer stopping over another search. "
-        "If you stop, answer from the facts you have and say what is missing. "
-        "If you continue, next_query must be a different search string."
+        "Set enough to true when any returned fact is partly relevant, even if the answer is incomplete."
     ),
 }
 
@@ -35,7 +30,8 @@ DEFAULT_PROMPT = "balanced"
 
 def system_prompt(name: str) -> str:
     try:
-        return PROMPTS[name]
+        enough = _ENOUGH[name]
     except KeyError as exc:
-        known = ", ".join(PROMPTS)
+        known = ", ".join(_ENOUGH)
         raise ValueError(f"unknown prompt {name!r}; choose one of: {known}") from exc
+    return f"{_CONTRACT} {enough}"

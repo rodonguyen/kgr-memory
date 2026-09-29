@@ -76,6 +76,15 @@ def test_oneshot_searches_once():
     assert calls == ["q"]
 
 
+def test_prompts_share_the_stop_contract():
+    from kgr_memory.prompts import system_prompt
+
+    texts = [system_prompt(name) for name in ("strict", "balanced", "loose")]
+    contract = "If enough is true, set next_query to null"
+    assert all(contract in text for text in texts)
+    assert len(set(texts)) == 3
+
+
 def test_unknown_prompt_rejected():
     import pytest
 
