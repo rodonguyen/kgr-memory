@@ -13,6 +13,12 @@ python -m kgr_memory ask "Where do I live?" --group demo --mode oneshot
 
 Live checks use a few short sentences in their own `--group`. Do not point a test at the LongMemEval file until that small case is already working.
 
+```bash
+python -m kgr_memory chat
+```
+
+That opens http://127.0.0.1:8765. You talk to the model. On each message it decides whether to search the graph and whether the message is a fact worth storing. The right-hand column shows those calls as they happen. **LoCoMo 10** replays the first 10 turns of one LoCoMo session into a fresh group. Search stops after 3 rounds in the chat; the `ask` command still caps at 10.
+
 Griffith University course project. Python. Assessment: project 60%, final presentation 10%, final report 30%.
 
 ## Course context

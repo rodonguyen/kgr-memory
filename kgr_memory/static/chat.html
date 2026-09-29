@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KGR chat</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1915;
+      --muted: #6b645c;
+      --line: #e4ddd4;
+      --paper: #f7f4ef;
+      --panel: #fff;
+      --user: #1c1915;
+      --user-ink: #fff;
+      --trace: #f3efe8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.45 "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    header {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header p { margin: 0; color: var(--muted); font-size: 13px; }
+    header .spacer { flex: 1; }
+    button, select {
+      font: inherit;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+    button { cursor: pointer; }
+    button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    main {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      height: calc(100vh - 57px);
+    }
+    #chat, #trace {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #trace { border-left: 1px solid var(--line); background: var(--trace); }
+    .scroll { flex: 1; overflow: auto; padding: 16px; }
+    .hint { color: var(--muted); margin: 0 0 12px; }
+    .bubble {
+      max-width: 42rem;
+      margin: 0 0 10px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      white-space: pre-wrap;
+    }
+    .bubble.user { background: var(--user); color: var(--user-ink); margin-left: auto; }
+    .bubble.assistant { background: var(--panel); border: 1px solid var(--line); }
+    .who { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+    .bubble.user .who { color: #d9d3cb; }
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+    }
+    input[type="text"] {
+      flex: 1;
+      font: inherit;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .event {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 0 0 8px;
+      font-size: 13px;
+    }
+    .event .k { color: var(--muted); }
+    .event.error { border-color: #a33; color: #a33; }
+    .event ul { margin: 6px 0 0; padding-left: 18px; }
+    @media (max-width: 800px) {
+      main { grid-template-columns: 1fr; height: auto; }
+      #trace { border-left: 0; border-top: 1px solid var(--line); min-height: 40vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>KGR</h1>
+      <p>You talk to the model. It decides when to search or store.</p>
+    </div>
+    <div class="spacer"></div>
+    <label>enough
+      <select id="prompt">
+        <option value="balanced" selected>balanced</option>
+        <option value="strict">strict</option>
+        <option value="loose">loose</option>
+      </select>
+    </label>
+    <button id="locomo" type="button">LoCoMo 10</button>
+    <button id="fresh" type="button">New chat</button>
+  </header>
+  <main>
+    <section id="chat">
+      <div class="scroll" id="messages">
+        <p class="hint" id="empty">Blank graph. A question searches memory. A fact such as “I like Thai food” is what gets stored.</p>
+      </div>
+      <form id="composer">
+        <input id="text" type="text" placeholder="Say something" autocomplete="off" />
+        <button class="primary" type="submit">Send</button>
+      </form>
+    </section>
+    <section id="trace">
+      <div class="scroll" id="events">
+        <p class="hint">Memory calls show up here as they happen. Group <span id="group"></span>.</p>
+      </div>
+    </section>
+  </main>
+  <script>
+    const messages = document.getElementById("messages");
+    const events = document.getElementById("events");
+    const text = document.getElementById("text");
+    const form = document.getElementById("composer");
+    const locomoBtn = document.getElementById("locomo");
+    const freshBtn = document.getElementById("fresh");
+    const prompt = document.getElementById("prompt");
+    const groupEl = document.getElementById("group");
+    let groupId = newGroup();
+    let history = [];
+    let busy = false;
+
+    function newGroup() {
+      const id = "chat-" + Math.random().toString(36).slice(2, 6);
+      groupEl.textContent = id;
+      return id;
+    }
+
+    function setBusy(on) {
+      busy = on;
+      form.querySelector("button").disabled = on;
+      locomoBtn.disabled = on;
+      freshBtn.disabled = on;
+      text.disabled = on;
+    }
+
+    function addBubble(role, content, who) {
+      document.getElementById("empty")?.remove();
+      const div = document.createElement("div");
+      div.className = "bubble " + role;
+      if (who) {
+        const label = document.createElement("span");
+        label.className = "who";
+        label.textContent = who;
+        div.appendChild(label);
+      }
+      div.appendChild(document.createTextNode(content));
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+      return div;
+    }
+
+    function addEvent(event) {
+      const div = document.createElement("div");
+      div.className = "event" + (event.type === "error" ? " error" : "");
+      if (event.type === "status") {
+        div.innerHTML = '<span class="k">status</span> ' + escape(event.text);
+      } else if (event.type === "plan") {
+        div.innerHTML =
+          '<span class="k">plan</span> search ' + event.search +
+          (event.query ? " · " + escape(event.query) : "") +
+          " · store " + event.store +
+          (event.memory ? " · " + escape(event.memory) : "");
+      } else if (event.type === "search") {
+        const facts = (event.facts || []).map(f => "<li>" + escape(f.text) + "</li>").join("");
+        div.innerHTML =
+          '<span class="k">search ' + event.round + '</span> ' + escape(event.query) +
+          " · " + event.seconds + "s · enough " + event.enough +
+          (facts ? "<ul>" + facts + "</ul>" : "<div>no facts</div>") +
+          (event.next_query ? '<div class="k">next: ' + escape(event.next_query) + "</div>" : "");
+      } else if (event.type === "store") {
+        div.innerHTML = '<span class="k">store</span> ' + escape(event.text);
+      } else if (event.type === "error") {
+        div.textContent = event.text;
+      } else {
+        return;
+      }
+      events.appendChild(div);
+      events.scrollTop = events.scrollHeight;
+    }
+
+    function escape(value) {
+      return String(value).replace(/[&<>"]/g, ch => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"
+      })[ch]);
+    }
+
+    async function sendTurn(content, who) {
+      addBubble("user", content, who);
+      const reply = addBubble("assistant", "…");
+      const prior = history.slice();
+      let answer = "";
+      const response = await fetch("/api/turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: content,
+          group_id: groupId,
+          history: prior,
+          prompt: prompt.value
+        })
+      });
+      if (!response.ok || !response.body) {
+        reply.textContent = "Request failed (" + response.status + ")";
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const step = await reader.read();
+        if (step.done) break;
+        buffer += decoder.decode(step.value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop();
+        for (const chunk of chunks) {
+          const line = chunk.split("\n").find(item => item.startsWith("data: "));
+          if (!line) continue;
+          const event = JSON.parse(line.slice(6));
+          if (event.type === "assistant") {
+            answer = event.text;
+            reply.textContent = answer || "(empty)";
+          } else if (event.type === "error") {
+            addEvent(event);
+            if (!answer) reply.textContent = event.text;
+          } else {
+            addEvent(event);
+          }
+        }
+      }
+      history.push({ role: "user", content });
+      if (answer) history.push({ role: "assistant", content: answer });
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const content = text.value.trim();
+      if (!content || busy) return;
+      text.value = "";
+      setBusy(true);
+      try {
+        await sendTurn(content);
+      } catch (err) {
+        addEvent({ type: "error", text: String(err) });
+      } finally {
+        setBusy(false);
+        text.focus();
+      }
+    });
+
+    freshBtn.addEventListener("click", () => {
+      history = [];
+      messages.innerHTML = '<p class="hint" id="empty">Blank graph. A question searches memory. A fact such as “I like Thai food” is what gets stored.</p>';
+      events.innerHTML = '<p class="hint">Memory calls show up here as they happen. Group <span id="group"></span>.</p>';
+      groupId = newGroup();
+      document.getElementById("group").textContent = groupId;
+    });
+
+    locomoBtn.addEventListener("click", async () => {
+      setBusy(true);
+      try {
+        const sample = await fetch("/api/locomo").then(r => r.json());
+        groupId = "locomo-" + sample.sample_id + "-" + Math.random().toString(36).slice(2, 6);
+        document.getElementById("group").textContent = groupId;
+        history = [];
+        messages.innerHTML = "";
+        events.innerHTML = '<p class="hint">' + sample.name + " · group " + groupId + "</p>";
+        for (const turn of sample.turns) {
+          const content = turn.speaker + ": " + turn.text;
+          await sendTurn(content, turn.speaker + " · " + turn.dia_id);
+        }
+      } catch (err) {
+        addEvent({ type: "error", text: String(err) });
+      } finally {
+        setBusy(false);
+      }
+    });
+  </script>
+</body>
+</html>

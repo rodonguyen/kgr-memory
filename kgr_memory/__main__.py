@@ -160,7 +160,18 @@ def main() -> None:
         help="JSONL trace (gitignored under data/)",
     )
 
+    chat_p = sub.add_parser(
+        "chat",
+        help="open a local page to talk to the model and watch memory calls",
+    )
+    chat_p.add_argument("--port", type=int, default=8765)
+
     args = parser.parse_args()
+    if args.cmd == "chat":
+        from kgr_memory.server import serve
+
+        serve(args.port)
+        return
     if args.cmd in {"store", "search", "ask"}:
         _graphiti_command(args)
         return

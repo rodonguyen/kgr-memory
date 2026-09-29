@@ -78,13 +78,47 @@ async def add_text(graphiti, text: str, group_id: str, name: str | None = None) 
     )
 
 
+def facts_from_search(edges, episodes) -> list[Fact]:
+    """Fact edges first, then the stored sentence when extraction wrote no edge."""
+    facts: list[Fact] = []
+    seen: set[str] = set()
+    for edge in edges:
+        text = getattr(edge, "fact", None)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        facts.append(Fact(edge_id=str(edge.uuid), text=text))
+    for episode in episodes:
+        text = getattr(episode, "content", None)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        facts.append(Fact(edge_id=str(episode.uuid), text=text))
+    return facts
+
+
 async def search_facts(graphiti, query: str, group_id: str, limit: int = 10) -> tuple[list[Fact], float]:
+    from graphiti_core.search.search_config import (
+        EpisodeReranker,
+        EpisodeSearchConfig,
+        EpisodeSearchMethod,
+        SearchConfig,
+    )
+
     started = time.perf_counter()
     edges = await graphiti.search(query, group_ids=[group_id], num_results=limit)
+    episodes = (
+        await graphiti.search_(
+            query,
+            config=SearchConfig(
+                episode_config=EpisodeSearchConfig(
+                    search_methods=[EpisodeSearchMethod.bm25],
+                    reranker=EpisodeReranker.rrf,
+                ),
+                limit=limit,
+            ),
+            group_ids=[group_id],
+        )
+    ).episodes
     elapsed = time.perf_counter() - started
-    facts = [
-        Fact(edge_id=str(edge.uuid), text=edge.fact)
-        for edge in edges
-        if getattr(edge, "fact", None)
-    ]
-    return facts, elapsed
+    return facts_from_search(edges, episodes), elapsed

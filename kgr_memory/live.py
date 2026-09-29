@@ -63,6 +63,83 @@ def decide_live(question: str, facts: list[Fact], prompt_name: str, sent: list[s
     return parse_decision(content)
 
 
+_PLAN_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "memory_plan",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "search": {"type": "boolean"},
+                "query": {"type": ["string", "null"]},
+                "store": {"type": "boolean"},
+                "memory": {"type": ["string", "null"]},
+            },
+            "required": ["search", "query", "store", "memory"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def _history_block(history: list[dict]) -> str:
+    if not history:
+        return "(none)"
+    lines = []
+    for turn in history[-8:]:
+        role = turn.get("role") or "user"
+        content = turn.get("content") or ""
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
+def plan_live(text: str, history: list[dict]):
+    from kgr_memory.chat_turn import PLAN_SYSTEM, parse_plan
+
+    response = _client().chat.completions.create(
+        model=os.environ.get("LLM_MODEL", LLM_MODEL),
+        temperature=0,
+        messages=[
+            {"role": "system", "content": PLAN_SYSTEM},
+            {
+                "role": "user",
+                "content": f"Recent talk:\n{_history_block(history)}\n\nLatest message:\n{text}",
+            },
+        ],
+        response_format=_PLAN_SCHEMA,
+    )
+    return parse_plan(response.choices[0].message.content or "")
+
+
+def reply_live(
+    text: str,
+    facts: list[Fact],
+    history: list[dict],
+    just_stored: str | None,
+) -> str:
+    from kgr_memory.chat_turn import REPLY_SYSTEM
+
+    stored = just_stored or "(nothing new)"
+    response = _client().chat.completions.create(
+        model=os.environ.get("LLM_MODEL", LLM_MODEL),
+        temperature=0,
+        messages=[
+            {"role": "system", "content": REPLY_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    f"Recent talk:\n{_history_block(history)}\n"
+                    f"Latest message:\n{text}\n"
+                    f"Facts from memory:\n{_fact_block(facts)}\n"
+                    f"Fact just stored:\n{stored}"
+                ),
+            },
+        ],
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
 def answer_live(question: str, facts: list[Fact]) -> str:
     response = _client().chat.completions.create(
         model=os.environ.get("LLM_MODEL", LLM_MODEL),
