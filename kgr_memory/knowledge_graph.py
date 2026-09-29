@@ -50,6 +50,23 @@ class GraphTriple:
     utterance_id: int
 
 
+@dataclass(frozen=True)
+class NodeRow:
+    id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class EdgeRow:
+    id: int
+    subject_id: int
+    subject: str
+    predicate: str
+    object_id: int
+    object: str
+    utterance_id: int
+
+
 class KnowledgeGraph:
     def __init__(
         self,
@@ -121,6 +138,37 @@ class KnowledgeGraph:
             )
         self._conn.commit()
         return stored
+
+    def nodes_and_edges_for(self, utterance_id: int) -> tuple[list[NodeRow], list[EdgeRow]]:
+        edge_rows = self._conn.execute(
+            """
+            SELECT e.id, e.subject_id, s.name, e.predicate, e.object_id, o.name, e.utterance_id
+            FROM edges e
+            JOIN nodes s ON s.id = e.subject_id
+            JOIN nodes o ON o.id = e.object_id
+            WHERE e.utterance_id = ?
+            ORDER BY e.id
+            """,
+            (utterance_id,),
+        ).fetchall()
+        edges = [
+            EdgeRow(
+                id=int(eid),
+                subject_id=int(sid),
+                subject=str(sname),
+                predicate=str(pred),
+                object_id=int(oid),
+                object=str(oname),
+                utterance_id=int(uid),
+            )
+            for eid, sid, sname, pred, oid, oname, uid in edge_rows
+        ]
+        seen: dict[int, NodeRow] = {}
+        for edge in edges:
+            seen.setdefault(edge.subject_id, NodeRow(edge.subject_id, edge.subject))
+            seen.setdefault(edge.object_id, NodeRow(edge.object_id, edge.object))
+        nodes = list(seen.values())
+        return nodes, edges
 
     def triples_for(self, utterance_ids: Iterable[int]) -> list[GraphTriple]:
         ids = list(utterance_ids)

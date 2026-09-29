@@ -2,6 +2,15 @@
 
 Knowledge graph for an LLM agent's memory, with reasoning.
 
+The assignment path calls Graphiti (unchanged) against local Neo4j. The model is `openai/gpt-4o-mini`. Embeddings are `qwen/qwen3-embedding-8b` (4096-d). The agent may search the graph again until it says the facts are enough, or until 10 rounds. `--prompt` is `strict`, `balanced`, or `loose`: that is the “enough” experiment. The SQLite `add` / `query` commands are the earlier prototype.
+
+```bash
+python -m kgr_memory store "I live in Brisbane" --group demo
+python -m kgr_memory search "Where do I live?" --group demo
+python -m kgr_memory ask "Where do I live?" --group demo --mode react --prompt balanced
+python -m kgr_memory ask "Where do I live?" --group demo --mode oneshot
+```
+
 Griffith University course project. Python. Assessment: project 60%, final presentation 10%, final report 30%.
 
 ## Course context

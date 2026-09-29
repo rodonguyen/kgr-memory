@@ -104,3 +104,17 @@ def test_query_from_utterances_empty_seed(tmp_path: Path) -> None:
     assert graph.query_from_utterances([]) == []
     store.close()
     graph.close()
+
+
+def test_nodes_and_edges_for_utterance(tmp_path: Path) -> None:
+    store, graph = _stores(tmp_path)
+    uid = store.add("I live in Brisbane", role="user")
+    graph.ingest(uid)
+    nodes, edges = graph.nodes_and_edges_for(uid)
+    assert {n.name for n in nodes} == {"user", "Brisbane"}
+    assert len(edges) == 1
+    assert edges[0].predicate == "lives_in"
+    assert edges[0].utterance_id == uid
+    assert edges[0].subject_id != edges[0].object_id
+    store.close()
+    graph.close()

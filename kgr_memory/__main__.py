@@ -14,10 +14,28 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from kgr_memory.knowledge_graph import KnowledgeGraph
+from kgr_memory.knowledge_graph import EdgeRow, KnowledgeGraph, NodeRow
 from kgr_memory.vector_store import VectorStore
 
 DEFAULT_DB = Path("data/memory.sqlite3")
+
+
+def print_nodes_and_edges(nodes: list[NodeRow], edges: list[EdgeRow]) -> None:
+    print("=== nodes ===")
+    if not nodes:
+        print("(none)")
+    for node in nodes:
+        print(f"[{node.id}] {node.name}")
+    print("=== edges ===")
+    if not edges:
+        print("(none)")
+    for edge in edges:
+        print(
+            f"[{edge.id}] {edge.subject_id}:{edge.subject}"
+            f" -- {edge.predicate} -->"
+            f" {edge.object_id}:{edge.object}"
+            f"  (utterance {edge.utterance_id})"
+        )
 
 _EPILOG = """
 Typical use:
@@ -98,18 +116,63 @@ def main() -> None:
         help="how many vector hits to return (default: 5)",
     )
 
+    store_p = sub.add_parser(
+        "store",
+        help="write one utterance into the Graphiti knowledge graph",
+    )
+    store_p.add_argument("text")
+    store_p.add_argument("--group", default="kgr", help="conversation partition")
+
+    search_p = sub.add_parser(
+        "search",
+        help="one Graphiti search; prints fact edges",
+    )
+    search_p.add_argument("text")
+    search_p.add_argument("--group", default="kgr")
+
+    ask_p = sub.add_parser(
+        "ask",
+        help="answer from the graph; oneshot or a ReAct loop",
+    )
+    ask_p.add_argument("text")
+    ask_p.add_argument("--group", default="kgr")
+    ask_p.add_argument(
+        "--mode",
+        choices=("oneshot", "react"),
+        default="react",
+    )
+    ask_p.add_argument(
+        "--prompt",
+        choices=("strict", "balanced", "loose"),
+        default="balanced",
+        help="which definition of enough the ReAct model uses",
+    )
+    ask_p.add_argument("--max-rounds", type=int, default=10)
+    ask_p.add_argument(
+        "--question-type",
+        default=None,
+        help="LongMemEval type, stored on the log row",
+    )
+    ask_p.add_argument(
+        "--log",
+        type=Path,
+        default=Path("data/runs/asks.jsonl"),
+        help="JSONL trace (gitignored under data/)",
+    )
+
     args = parser.parse_args()
+    if args.cmd in {"store", "search", "ask"}:
+        _graphiti_command(args)
+        return
     if args.cmd == "add":
         store = VectorStore(args.db)
         graph = KnowledgeGraph(args.db)
         try:
             utterance_id = store.add(args.text, role=args.role)
             print(f"stored utterance {utterance_id}")
-            triples = graph.ingest(utterance_id)
-            if not triples:
-                print("graph: (no triples)")
-            for triple in triples:
-                print(f"  {triple.subject} -- {triple.predicate} --> {triple.object}")
+            graph.ingest(utterance_id)
+            nodes, edges = graph.nodes_and_edges_for(utterance_id)
+            print_nodes_and_edges(nodes, edges)
         finally:
             store.close()
             graph.close()
@@ -118,10 +181,10 @@ def main() -> None:
     if args.cmd == "ingest":
         graph = KnowledgeGraph(args.db)
         try:
-            triples = graph.ingest(args.utterance_id)
-            print(f"ingested utterance {args.utterance_id} ({len(triples)} triple(s))")
-            for triple in triples:
-                print(f"  {triple.subject} -- {triple.predicate} --> {triple.object}")
+            graph.ingest(args.utterance_id)
+            nodes, edges = graph.nodes_and_edges_for(args.utterance_id)
+            print(f"ingested utterance {args.utterance_id}")
+            print_nodes_and_edges(nodes, edges)
         finally:
             graph.close()
         return
@@ -149,6 +212,118 @@ def main() -> None:
     finally:
         store.close()
         graph.close()
+
+
+def _graphiti_command(args) -> None:
+    import asyncio
+
+    from kgr_memory.graphiti_memory import add_text, build_graphiti, ensure_indices, search_facts
+    from kgr_memory.live import answer_live, append_log, result_record
+    from kgr_memory.react import AskResult, RoundLog
+
+    async def run():
+        graphiti = build_graphiti()
+        try:
+            await ensure_indices(graphiti)
+
+            if args.cmd == "store":
+                await add_text(graphiti, args.text, args.group)
+                print(f"stored in group {args.group}")
+                return
+            if args.cmd == "search":
+                facts, seconds = await search_facts(graphiti, args.text, args.group)
+                print(f"{seconds:.3f}s  {len(facts)} facts")
+                for fact in facts:
+                    print(f"[{fact.edge_id}] {fact.text}")
+                return
+
+            if args.mode == "oneshot":
+                facts, seconds = await search_facts(graphiti, args.text, args.group)
+                result = AskResult(
+                    question=args.text,
+                    prompt_name=args.prompt,
+                    mode="oneshot",
+                    answer=answer_live(args.text, facts),
+                    rounds=[
+                        RoundLog(
+                            round=1,
+                            query=args.text,
+                            facts=facts,
+                            search_seconds=seconds,
+                        )
+                    ],
+                    stopped_because="oneshot",
+                )
+            else:
+                result = await _ask_react_async(
+                    graphiti,
+                    args.text,
+                    args.group,
+                    args.prompt,
+                    args.max_rounds,
+                )
+            print(result.answer)
+            print(
+                f"mode={result.mode} prompt={result.prompt_name} "
+                f"rounds={len(result.rounds)} stop={result.stopped_because}"
+            )
+            append_log(
+                args.log,
+                result_record(
+                    result,
+                    group_id=args.group,
+                    question_type=args.question_type,
+                ),
+            )
+            print(f"log {args.log}")
+        finally:
+            await graphiti.close()
+
+    asyncio.run(run())
+
+
+async def _ask_react_async(graphiti, question, group_id, prompt_name, max_rounds):
+    from kgr_memory.graphiti_memory import search_facts
+    from kgr_memory.live import answer_live, decide_live
+    from kgr_memory.react import MAX_ROUNDS, AskResult, RoundLog, _merge
+
+    result = AskResult(
+        question=question, prompt_name=prompt_name, mode="react", answer=""
+    )
+    facts = []
+    query = question
+    sent: list[str] = []
+    cap = max_rounds or MAX_ROUNDS
+    for n in range(1, cap + 1):
+        found, seconds = await search_facts(graphiti, query, group_id)
+        facts = _merge(facts, found)
+        sent.append(query)
+        decision = decide_live(question, facts, prompt_name, sent)
+        result.rounds.append(
+            RoundLog(
+                round=n,
+                query=query,
+                facts=list(found),
+                search_seconds=seconds,
+                enough=decision.enough,
+                next_query=decision.next_query,
+            )
+        )
+        if decision.enough:
+            result.answer = decision.answer or answer_live(question, facts)
+            result.stopped_because = "enough"
+            return result
+        if n == cap:
+            result.answer = decision.answer or answer_live(question, facts)
+            result.stopped_because = "cap"
+            return result
+        nxt = (decision.next_query or "").strip()
+        if not nxt or nxt in sent:
+            result.answer = decision.answer or answer_live(question, facts)
+            result.stopped_because = "no_new_query"
+            return result
+        query = nxt
+    return result
 
 
 if __name__ == "__main__":
