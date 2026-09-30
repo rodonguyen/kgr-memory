@@ -7,6 +7,18 @@ import time
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+from graphiti_core import Graphiti
+from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
+from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+from graphiti_core.llm_client.config import LLMConfig
+from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+from graphiti_core.nodes import EpisodeType
+from graphiti_core.search.search_config import (
+    EpisodeReranker,
+    EpisodeSearchConfig,
+    EpisodeSearchMethod,
+    SearchConfig,
+)
 
 from kgr_memory.react import Fact
 
@@ -29,12 +41,6 @@ def require_key() -> str:
 
 
 def build_graphiti():
-    from graphiti_core import Graphiti
-    from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
-    from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
-    from graphiti_core.llm_client.config import LLMConfig
-    from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
-
     key = require_key()
     llm_config = LLMConfig(
         api_key=key,
@@ -62,12 +68,15 @@ def build_graphiti():
 
 
 async def ensure_indices(graphiti) -> None:
+    """One index build. Neo4jDriver already schedules it when the loop is running."""
+    task = getattr(graphiti.driver, "_init_task", None)
+    if task is not None:
+        await task
+        return
     await graphiti.build_indices_and_constraints()
 
 
 async def add_text(graphiti, text: str, group_id: str, name: str | None = None) -> None:
-    from graphiti_core.nodes import EpisodeType
-
     await graphiti.add_episode(
         name=name or text[:80],
         episode_body=text,
@@ -98,13 +107,6 @@ def facts_from_search(edges, episodes) -> list[Fact]:
 
 
 async def search_facts(graphiti, query: str, group_id: str, limit: int = 10) -> tuple[list[Fact], float]:
-    from graphiti_core.search.search_config import (
-        EpisodeReranker,
-        EpisodeSearchConfig,
-        EpisodeSearchMethod,
-        SearchConfig,
-    )
-
     started = time.perf_counter()
     edges = await graphiti.search(query, group_ids=[group_id], num_results=limit)
     episodes = (

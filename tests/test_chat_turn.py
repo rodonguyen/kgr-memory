@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from kgr_memory.chat_turn import TurnPlan, load_locomo_sample, parse_plan, run_turn
-from kgr_memory.graphiti_memory import facts_from_search
+from kgr_memory.graphiti_memory import ensure_indices, facts_from_search
 from kgr_memory.react import Decision, Fact
 
 
@@ -87,6 +87,44 @@ def test_question_searches_until_enough():
     assert searches[0]["enough"] is False
     assert searches[1]["facts"][0]["text"] == "The user likes Thai food."
     assert events[-1]["text"] == "The user likes Thai food."
+
+
+def test_ensure_indices_waits_for_the_driver_task():
+    async def scenario():
+        calls = []
+
+        async def driver_build():
+            calls.append("driver")
+
+        class Graph:
+            def __init__(self):
+                self.driver = SimpleNamespace(_init_task=asyncio.create_task(driver_build()))
+
+            async def build_indices_and_constraints(self):
+                calls.append("again")
+
+        graph = Graph()
+        await ensure_indices(graph)
+        await ensure_indices(graph)
+        return calls
+
+    assert asyncio.run(scenario()) == ["driver"]
+
+
+def test_ensure_indices_builds_when_the_driver_did_not():
+    async def scenario():
+        calls = []
+
+        class Graph:
+            driver = SimpleNamespace()
+
+            async def build_indices_and_constraints(self):
+                calls.append("build")
+
+        await ensure_indices(Graph())
+        return calls
+
+    assert asyncio.run(scenario()) == ["build"]
 
 
 async def _fail():

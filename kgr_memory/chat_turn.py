@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable
 
 from kgr_memory.prompts import DEFAULT_PROMPT
-from kgr_memory.react import Decision, Fact, _merge, _stop_or_continue
+from kgr_memory.react import Decision, Fact, _json_object, _search_rounds
 
 CHAT_SEARCH_ROUNDS = 3
 
@@ -31,9 +31,10 @@ PLAN_SYSTEM = (
 
 REPLY_SYSTEM = (
     "You are the person the user is talking to. "
-    "Use the remembered facts when they answer the message. "
+    "If a remembered fact answers the message, say that fact. "
+    "Do not claim you do not know when a fact is listed. "
     "If a new fact is listed as just stated, acknowledge it. "
-    "If the facts are empty and the user asked for something personal, "
+    "Only if the facts are empty and the user asked for something personal, "
     "say you do not know that yet and give a short general suggestion. "
     "Keep the reply to a few sentences."
 )
@@ -48,11 +49,7 @@ class TurnPlan:
 
 
 def parse_plan(raw: str) -> TurnPlan:
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1]
-        text = text.rsplit("```", 1)[0]
-    data = json.loads(text)
+    data = _json_object(raw)
     query = data.get("query")
     memory = data.get("memory")
     return TurnPlan(
@@ -98,35 +95,30 @@ async def run_turn(
 
     facts: list[Fact] = []
     if chosen.search:
-        sent: list[str] = []
-        current = query.strip() or text
-        for n in range(1, max_rounds + 1):
-            yield {"type": "status", "text": f"search {n}: {current}"}
-            found, seconds = await search(current)
-            facts = _merge(facts, found)
-            sent.append(current)
-            decision = decide(text, facts, prompt_name, sent)
+        async for step in _search_rounds(
+            text,
+            search,
+            decide,
+            lambda _question, _facts: "",
+            prompt_name=prompt_name,
+            max_rounds=max_rounds,
+            query=query.strip() or text,
+        ):
+            if step.decision is None:
+                yield {"type": "status", "text": f"search {step.round}: {step.query}"}
+                continue
+            facts = step.facts or []
             yield {
                 "type": "search",
-                "round": n,
-                "query": current,
-                "seconds": round(seconds, 3),
-                "enough": decision.enough,
-                "next_query": decision.next_query,
-                "facts": [{"edge_id": fact.edge_id, "text": fact.text} for fact in found],
+                "round": step.round,
+                "query": step.query,
+                "seconds": round(step.seconds, 3),
+                "enough": step.decision.enough,
+                "next_query": step.decision.next_query,
+                "facts": [
+                    {"edge_id": fact.edge_id, "text": fact.text} for fact in (step.found or [])
+                ],
             }
-            _final, reason, nxt = _stop_or_continue(
-                decision,
-                round_n=n,
-                cap=max_rounds,
-                sent=sent,
-                question=text,
-                facts=facts,
-                answer=lambda _q, _f: "",
-            )
-            if reason or not nxt:
-                break
-            current = nxt
 
     memory = chosen.memory or text
     if chosen.store:

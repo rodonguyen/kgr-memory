@@ -6,9 +6,10 @@ and returns whether they are enough, a next query, or an answer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import AsyncIterator, Callable
 
 from kgr_memory.prompts import DEFAULT_PROMPT, system_prompt
 
@@ -61,12 +62,16 @@ DecideFn = Callable[[str, list[Fact], str, list[str]], Decision]
 AnswerFn = Callable[[str, list[Fact]], str]
 
 
-def parse_decision(raw: str) -> Decision:
+def _json_object(raw: str) -> dict:
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[-1]
         text = text.rsplit("```", 1)[0]
-    data = json.loads(text)
+    return json.loads(text)
+
+
+def parse_decision(raw: str) -> Decision:
+    data = _json_object(raw)
     nxt = data.get("next_query")
     answer = data.get("answer")
     return Decision(
@@ -108,6 +113,64 @@ def _stop_or_continue(
     return None, None, nxt
 
 
+@dataclass
+class _Step:
+    """One beat of the search loop. decision is None until that search has returned."""
+
+    round: int
+    query: str
+    found: list[Fact] | None = None
+    seconds: float = 0.0
+    decision: Decision | None = None
+    facts: list[Fact] | None = None
+    final: str | None = None
+    reason: str | None = None
+
+
+async def _search_rounds(
+    question: str,
+    search,
+    decide: DecideFn,
+    answer: AnswerFn,
+    *,
+    prompt_name: str,
+    max_rounds: int,
+    query: str,
+) -> AsyncIterator[_Step]:
+    """Yield before each search, then the round. Stop rules live in _stop_or_continue."""
+    facts: list[Fact] = []
+    sent: list[str] = []
+    current = query
+    for n in range(1, max_rounds + 1):
+        yield _Step(round=n, query=current)
+        found, seconds = await search(current)
+        facts = _merge(facts, found)
+        sent.append(current)
+        decision = decide(question, facts, prompt_name, sent)
+        final, reason, nxt = _stop_or_continue(
+            decision,
+            round_n=n,
+            cap=max_rounds,
+            sent=sent,
+            question=question,
+            facts=facts,
+            answer=answer,
+        )
+        yield _Step(
+            round=n,
+            query=current,
+            found=found,
+            seconds=seconds,
+            decision=decision,
+            facts=facts,
+            final=final,
+            reason=reason,
+        )
+        if reason:
+            return
+        current = nxt or current
+
+
 def ask_react(
     question: str,
     search: SearchFn,
@@ -118,45 +181,20 @@ def ask_react(
     max_rounds: int = MAX_ROUNDS,
 ) -> AskResult:
     """Search, then let the model stop or query again. Cap is max_rounds."""
-    system_prompt(prompt_name)
-    result = AskResult(question=question, prompt_name=prompt_name, mode="react", answer="")
-    facts: list[Fact] = []
-    query = question
-    sent: list[str] = []
 
-    for n in range(1, max_rounds + 1):
-        found, seconds = search(query)
-        facts = _merge(facts, found)
-        sent.append(query)
-        decision = decide(question, facts, prompt_name, sent)
-        result.rounds.append(
-            RoundLog(
-                round=n,
-                query=query,
-                facts=list(found),
-                search_seconds=seconds,
-                enough=decision.enough,
-                next_query=decision.next_query,
-            )
-        )
-        final, reason, nxt = _stop_or_continue(
-            decision,
-            round_n=n,
-            cap=max_rounds,
-            sent=sent,
-            question=question,
-            facts=facts,
-            answer=answer,
-        )
-        if reason:
-            result.answer = final or ""
-            result.stopped_because = reason
-            return result
-        query = nxt or query
+    async def search_async(query: str):
+        return search(query)
 
-    result.answer = answer(question, facts)
-    result.stopped_because = "cap"
-    return result
+    return asyncio.run(
+        ask_react_async(
+            question,
+            search_async,
+            decide,
+            answer,
+            prompt_name=prompt_name,
+            max_rounds=max_rounds,
+        )
+    )
 
 
 async def ask_react_async(
@@ -172,37 +210,33 @@ async def ask_react_async(
     system_prompt(prompt_name)
     result = AskResult(question=question, prompt_name=prompt_name, mode="react", answer="")
     facts: list[Fact] = []
-    query = question
-    sent: list[str] = []
-    for n in range(1, max_rounds + 1):
-        found, seconds = await search(query)
-        facts = _merge(facts, found)
-        sent.append(query)
-        decision = decide(question, facts, prompt_name, sent)
+    async for step in _search_rounds(
+        question,
+        search,
+        decide,
+        answer,
+        prompt_name=prompt_name,
+        max_rounds=max_rounds,
+        query=question,
+    ):
+        decision = step.decision
+        if decision is None:
+            continue
+        facts = step.facts or []
         result.rounds.append(
             RoundLog(
-                round=n,
-                query=query,
-                facts=list(found),
-                search_seconds=seconds,
+                round=step.round,
+                query=step.query,
+                facts=list(step.found or []),
+                search_seconds=step.seconds,
                 enough=decision.enough,
                 next_query=decision.next_query,
             )
         )
-        final, reason, nxt = _stop_or_continue(
-            decision,
-            round_n=n,
-            cap=max_rounds,
-            sent=sent,
-            question=question,
-            facts=facts,
-            answer=answer,
-        )
-        if reason:
-            result.answer = final or ""
-            result.stopped_because = reason
+        if step.reason:
+            result.answer = step.final or ""
+            result.stopped_because = step.reason
             return result
-        query = nxt or query
     result.answer = answer(question, facts)
     result.stopped_because = "cap"
     return result

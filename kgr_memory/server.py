@@ -10,8 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from kgr_memory.chat_turn import CHAT_SEARCH_ROUNDS, load_locomo_sample, run_turn
+from kgr_memory.graphiti_memory import add_text, build_graphiti, ensure_indices, search_facts
+from kgr_memory.live import decide_live, plan_live, reply_live
 
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 PORT = 8765
 _PAGE = Path(__file__).resolve().parent / "static" / "chat.html"
 
@@ -35,16 +37,10 @@ class Runtime:
                 graphiti = await self._client()
 
                 async def search(query: str):
-                    from kgr_memory.graphiti_memory import search_facts
-
                     return await search_facts(graphiti, query, payload["group_id"])
 
                 async def store(memory: str) -> None:
-                    from kgr_memory.graphiti_memory import add_text
-
                     await add_text(graphiti, memory, payload["group_id"])
-
-                from kgr_memory.live import decide_live, plan_live, reply_live
 
                 async for event in run_turn(
                     payload["text"],
@@ -76,14 +72,12 @@ class Runtime:
 
     async def _client(self):
         if self._graphiti is None:
-            from kgr_memory.graphiti_memory import build_graphiti, ensure_indices
-
             self._graphiti = build_graphiti()
             await ensure_indices(self._graphiti)
         return self._graphiti
 
 
-def serve(port: int = PORT) -> None:
+def serve(port: int = PORT, host: str = HOST) -> None:
     runtime = Runtime()
     page = _PAGE.read_text(encoding="utf-8")
 
@@ -134,8 +128,8 @@ def serve(port: int = PORT) -> None:
         def log_message(self, fmt: str, *args) -> None:
             print(f"[chat] {self.address_string()} {fmt % args}")
 
-    server = ThreadingHTTPServer((HOST, port), Handler)
-    print(f"KGR chat at http://{HOST}:{port}")
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"KGR chat at http://127.0.0.1:{port} and http://100.116.98.15:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

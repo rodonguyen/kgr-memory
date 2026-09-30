@@ -165,12 +165,17 @@ def main() -> None:
         help="open a local page to talk to the model and watch memory calls",
     )
     chat_p.add_argument("--port", type=int, default=8765)
+    chat_p.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="listen address; 0.0.0.0 so the Tailscale IP can open the page",
+    )
 
     args = parser.parse_args()
     if args.cmd == "chat":
         from kgr_memory.server import serve
 
-        serve(args.port)
+        serve(args.port, args.host)
         return
     if args.cmd in {"store", "search", "ask"}:
         _graphiti_command(args)
@@ -229,8 +234,8 @@ def _graphiti_command(args) -> None:
     import asyncio
 
     from kgr_memory.graphiti_memory import add_text, build_graphiti, ensure_indices, search_facts
-    from kgr_memory.live import answer_live, append_log, result_record
-    from kgr_memory.react import AskResult, RoundLog
+    from kgr_memory.live import answer_live, append_log, decide_live, result_record
+    from kgr_memory.react import AskResult, RoundLog, ask_react_async
 
     async def run():
         graphiti = build_graphiti()
@@ -266,8 +271,6 @@ def _graphiti_command(args) -> None:
                     stopped_because="oneshot",
                 )
             else:
-                from kgr_memory.live import decide_live
-                from kgr_memory.react import ask_react_async
 
                 async def search(query: str):
                     return await search_facts(graphiti, query, args.group)

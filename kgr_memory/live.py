@@ -8,11 +8,14 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from kgr_memory.chat_turn import PLAN_SYSTEM, REPLY_SYSTEM, parse_plan
 from kgr_memory.graphiti_memory import LLM_MODEL, OPENROUTER_BASE_URL, require_key
 from kgr_memory.prompts import system_prompt
 from kgr_memory.react import Decision, Fact, parse_decision
 
 load_dotenv()
+
+_openai: OpenAI | None = None
 
 _DECISION_SCHEMA = {
     "type": "json_schema",
@@ -34,7 +37,10 @@ _DECISION_SCHEMA = {
 
 
 def _client() -> OpenAI:
-    return OpenAI(api_key=require_key(), base_url=OPENROUTER_BASE_URL)
+    global _openai
+    if _openai is None:
+        _openai = OpenAI(api_key=require_key(), base_url=OPENROUTER_BASE_URL)
+    return _openai
 
 
 def _fact_block(facts: list[Fact]) -> str:
@@ -95,8 +101,6 @@ def _history_block(history: list[dict]) -> str:
 
 
 def plan_live(text: str, history: list[dict]):
-    from kgr_memory.chat_turn import PLAN_SYSTEM, parse_plan
-
     response = _client().chat.completions.create(
         model=os.environ.get("LLM_MODEL", LLM_MODEL),
         temperature=0,
@@ -118,8 +122,6 @@ def reply_live(
     history: list[dict],
     just_stored: str | None,
 ) -> str:
-    from kgr_memory.chat_turn import REPLY_SYSTEM
-
     stored = just_stored or "(nothing new)"
     response = _client().chat.completions.create(
         model=os.environ.get("LLM_MODEL", LLM_MODEL),
