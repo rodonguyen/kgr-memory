@@ -192,6 +192,44 @@ def main() -> None:
         help="graph partition; default is the id, so a new id keeps the previous ingest",
     )
 
+    ask_bench_p = sub.add_parser(
+        "bench-ask",
+        help="ask the dataset question and append a judge hypothesis line",
+        description=(
+            "The history must already be in the group (bench-ingest).\n"
+            "Writes JSONL the LongMemEval judge reads: "
+            '{"question_id": "...", "hypothesis": "..."}.\n'
+            "LoCoMo uses one group per conversation and writes one line per question. "
+            "LongMemEval uses one group per question id.\n\n"
+            "Examples:\n"
+            "  python -m kgr_memory bench-ask longmemeval --id e47becba --mode react\n"
+            "  python -m kgr_memory bench-ask locomo --id conv-26 --mode oneshot --limit 1"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ask_bench_p.add_argument("dataset", choices=("locomo", "longmemeval"))
+    ask_bench_p.add_argument("--id", required=True)
+    ask_bench_p.add_argument("--group", default=None)
+    ask_bench_p.add_argument("--mode", choices=("oneshot", "react"), default="react")
+    ask_bench_p.add_argument(
+        "--prompt",
+        choices=("strict", "balanced", "loose"),
+        default="balanced",
+    )
+    ask_bench_p.add_argument("--max-rounds", type=int, default=10)
+    ask_bench_p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="ask only the first N questions; default is every question for that id",
+    )
+    ask_bench_p.add_argument(
+        "--log",
+        type=Path,
+        default=Path("data/runs/hypotheses.jsonl"),
+        help="appended judge file (gitignored under data/runs/)",
+    )
+
     chat_p = sub.add_parser(
         "chat",
         help="open a local page to talk to the model and watch memory calls",
@@ -209,7 +247,7 @@ def main() -> None:
 
         serve(args.port, args.host)
         return
-    if args.cmd in {"store", "search", "ask", "bench-ingest"}:
+    if args.cmd in {"store", "search", "ask", "bench-ingest", "bench-ask"}:
         _graphiti_command(args)
         return
     if args.cmd == "add":
@@ -285,6 +323,23 @@ def _graphiti_command(args) -> None:
                     graphiti, args.dataset, args.id, args.group
                 )
                 print(f"ingested {count} lines into group {group}")
+                return
+            if args.cmd == "bench-ask":
+                from kgr_memory.benchmark import ask_dataset
+
+                group, count = await ask_dataset(
+                    graphiti,
+                    args.dataset,
+                    args.id,
+                    group_id=args.group,
+                    mode=args.mode,
+                    prompt_name=args.prompt,
+                    max_rounds=args.max_rounds,
+                    log_path=args.log,
+                    limit=args.limit,
+                )
+                print(f"asked {count} questions in group {group}")
+                print(f"log {args.log}")
                 return
             if args.cmd == "search":
                 facts, seconds = await search_facts(graphiti, args.text, args.group)

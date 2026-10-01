@@ -1,10 +1,16 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 
 from kgr_memory.benchmark import (
+    BenchmarkQuestion,
+    append_hypothesis,
     ingest_messages,
     locomo_messages,
+    locomo_questions,
     longmemeval_messages,
+    longmemeval_questions,
+    posed_question,
     select_locomo,
     select_longmemeval,
 )
@@ -66,6 +72,55 @@ def test_select_rejects_an_unknown_id():
         select_locomo([LOCOMO], "conv-99")
     with pytest.raises(ValueError):
         select_longmemeval([LONGMEMEVAL], "missing")
+
+
+LOCOMO_QA = {
+    **LOCOMO,
+    "qa": [
+        {"question": "What did Caroline attend?", "answer": "a support group", "category": 1},
+        {"question": "What did she paint?", "answer": "a sunrise", "category": 2},
+    ],
+}
+
+LONGMEMEVAL_QA = {
+    **LONGMEMEVAL,
+    "question": "What degree did I graduate with?",
+    "question_type": "single-session-user",
+    "question_date": "2023/05/30 (Tue) 23:40",
+    "answer": "Business Administration",
+}
+
+
+def test_locomo_questions_share_the_conversation_group():
+    questions = locomo_questions(LOCOMO_QA)
+    assert [q.question_id for q in questions] == ["conv-26-0", "conv-26-1"]
+    assert {q.group_id for q in questions} == {"conv-26"}
+    assert questions[0].question == "What did Caroline attend?"
+
+
+def test_longmemeval_question_carries_its_date():
+    question = longmemeval_questions(LONGMEMEVAL_QA)[0]
+    assert question.question_id == "e47becba"
+    assert question.group_id == "e47becba"
+    posed = posed_question(question)
+    assert posed.startswith("What degree did I graduate with?")
+    assert "Question date: 2023-05-30 23:40 UTC" in posed
+
+
+def test_hypothesis_line_is_only_the_judge_fields(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    append_hypothesis(path, "e47becba", "Business Administration")
+    append_hypothesis(path, "conv-26-0", "a support group")
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [
+        {"question_id": "e47becba", "hypothesis": "Business Administration"},
+        {"question_id": "conv-26-0", "hypothesis": "a support group"},
+    ]
+
+
+def test_posed_question_without_a_date_is_the_dataset_text():
+    question = BenchmarkQuestion("conv-26-0", "What did Caroline attend?", "conv-26")
+    assert posed_question(question) == "What did Caroline attend?"
 
 
 def test_ingest_writes_the_raw_line_and_the_session_date():

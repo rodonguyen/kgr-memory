@@ -130,6 +130,133 @@ def select_item(dataset: str, data: list[dict], item_id: str) -> dict:
     raise ValueError(f"unknown dataset {dataset!r}")
 
 
+@dataclass(frozen=True)
+class BenchmarkQuestion:
+    question_id: str
+    question: str
+    group_id: str
+    question_type: str | None = None
+    question_date: datetime | None = None
+
+
+def locomo_questions(item: dict, group_id: str | None = None) -> list[BenchmarkQuestion]:
+    """Questions are asked against the conversation group, not a new graph per question."""
+    group = group_id or item["sample_id"]
+    sample_id = item["sample_id"]
+    return [
+        BenchmarkQuestion(
+            question_id=f"{sample_id}-{index}",
+            question=qa["question"],
+            group_id=group,
+            question_type=str(qa["category"]),
+        )
+        for index, qa in enumerate(item["qa"])
+    ]
+
+
+def longmemeval_questions(item: dict, group_id: str | None = None) -> list[BenchmarkQuestion]:
+    """One question, searched only inside that question's haystack group."""
+    return [
+        BenchmarkQuestion(
+            question_id=item["question_id"],
+            question=item["question"],
+            group_id=group_id or item["question_id"],
+            question_type=item["question_type"],
+            question_date=parse_reference_time(item["question_date"]),
+        )
+    ]
+
+
+def questions_for(dataset: str, item: dict, group_id: str | None) -> list[BenchmarkQuestion]:
+    if dataset == "locomo":
+        return locomo_questions(item, group_id)
+    if dataset == "longmemeval":
+        return longmemeval_questions(item, group_id)
+    raise ValueError(f"unknown dataset {dataset!r}")
+
+
+def posed_question(question: BenchmarkQuestion) -> str:
+    """The dataset question. LongMemEval also needs the question date for temporal items."""
+    if question.question_date is None:
+        return question.question
+    stamp = question.question_date.strftime("%Y-%m-%d %H:%M UTC")
+    return f"{question.question}\nQuestion date: {stamp}"
+
+
+def append_hypothesis(path: Path, question_id: str, hypothesis: str) -> None:
+    """One JSON line for evaluate_qa.py: question_id and hypothesis, nothing else."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {"question_id": question_id, "hypothesis": hypothesis}
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+async def ask_benchmark_question(
+    graphiti,
+    question: BenchmarkQuestion,
+    *,
+    mode: str,
+    prompt_name: str,
+    max_rounds: int,
+) -> str:
+    from kgr_memory.graphiti_memory import search_facts
+    from kgr_memory.live import answer_live, decide_live
+    from kgr_memory.react import ask_once_async, ask_react_async
+
+    text = posed_question(question)
+
+    async def search(query: str):
+        return await search_facts(graphiti, query, question.group_id)
+
+    if mode == "oneshot":
+        result = await ask_once_async(text, search, answer_live, prompt_name=prompt_name)
+    elif mode == "react":
+        result = await ask_react_async(
+            text,
+            search,
+            decide_live,
+            answer_live,
+            prompt_name=prompt_name,
+            max_rounds=max_rounds,
+        )
+    else:
+        raise ValueError(f"unknown mode {mode!r}")
+    return result.answer
+
+
+async def ask_dataset(
+    graphiti,
+    dataset: str,
+    item_id: str,
+    *,
+    group_id: str | None,
+    mode: str,
+    prompt_name: str,
+    max_rounds: int,
+    log_path: Path,
+    limit: int | None,
+) -> tuple[str, int]:
+    path = dataset_path(dataset)
+    if not path.is_file():
+        raise FileNotFoundError(f"missing {path}")
+    questions = questions_for(dataset, select_item(dataset, load_json(path), item_id), group_id)
+    if limit is not None:
+        questions = questions[:limit]
+    if not questions:
+        raise ValueError(f"no questions for {item_id}")
+    for question in questions:
+        hypothesis = await ask_benchmark_question(
+            graphiti,
+            question,
+            mode=mode,
+            prompt_name=prompt_name,
+            max_rounds=max_rounds,
+        )
+        append_hypothesis(log_path, question.question_id, hypothesis)
+        print(f"{question.question_id}\t{hypothesis}")
+    return questions[0].group_id, len(questions)
+
+
 async def ingest_dataset(
     graphiti,
     dataset: str,

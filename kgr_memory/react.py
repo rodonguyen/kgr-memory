@@ -250,8 +250,25 @@ def ask_once(
     prompt_name: str = DEFAULT_PROMPT,
 ) -> AskResult:
     """One search, then an answer. No second call to the graph."""
-    found, seconds = search(question)
-    result = AskResult(
+
+    async def search_async(query: str):
+        return search(query)
+
+    return asyncio.run(
+        ask_once_async(question, search_async, answer, prompt_name=prompt_name)
+    )
+
+
+async def ask_once_async(
+    question: str,
+    search,
+    answer: AnswerFn,
+    *,
+    prompt_name: str = DEFAULT_PROMPT,
+) -> AskResult:
+    """Same one-search path as ask_once. search is async and returns (facts, seconds)."""
+    found, seconds = await search(question)
+    return AskResult(
         question=question,
         prompt_name=prompt_name,
         mode="oneshot",
@@ -259,6 +276,5 @@ def ask_once(
         rounds=[
             RoundLog(round=1, query=question, facts=list(found), search_seconds=seconds)
         ],
-        stopped_because = "oneshot",
+        stopped_because="oneshot",
     )
-    return result
