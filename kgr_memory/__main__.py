@@ -122,6 +122,11 @@ def main() -> None:
     )
     store_p.add_argument("text")
     store_p.add_argument("--group", default="kgr", help="conversation partition")
+    store_p.add_argument(
+        "--at",
+        default=None,
+        help="session date for the episode (LongMemEval, LoCoMo, or ISO). Default is now",
+    )
 
     search_p = sub.add_parser(
         "search",
@@ -243,7 +248,7 @@ def _graphiti_command(args) -> None:
             await ensure_indices(graphiti)
 
             if args.cmd == "store":
-                await add_text(graphiti, args.text, args.group)
+                await add_text(graphiti, args.text, args.group, reference_time=args.at)
                 print(f"stored in group {args.group}")
                 return
             if args.cmd == "search":

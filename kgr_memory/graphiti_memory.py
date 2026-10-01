@@ -76,12 +76,54 @@ async def ensure_indices(graphiti) -> None:
     await graphiti.build_indices_and_constraints()
 
 
-async def add_text(graphiti, text: str, group_id: str, name: str | None = None) -> None:
+_LONGMEMEVAL_DATE = "%Y/%m/%d (%a) %H:%M"
+_LOCOMO_DATE = "%I:%M %p on %d %B, %Y"
+
+
+def parse_reference_time(value: datetime | str) -> datetime:
+    """Session dates from LongMemEval and LoCoMo, or an ISO timestamp.
+
+    Graphiti dates a fact from this value. A missing zone is treated as UTC.
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    text = value.strip()
+    if text.endswith(" UTC"):
+        text = text[: -len(" UTC")].strip()
+    for fmt in (_LONGMEMEVAL_DATE, _LOCOMO_DATE):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"unrecognised session date: {value!r}") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+async def add_text(
+    graphiti,
+    text: str,
+    group_id: str,
+    name: str | None = None,
+    reference_time: datetime | str | None = None,
+) -> None:
+    """Write one episode. reference_time is the session date, not the clock time of the run."""
+    when = (
+        datetime.now(timezone.utc)
+        if reference_time is None
+        else parse_reference_time(reference_time)
+    )
     await graphiti.add_episode(
         name=name or text[:80],
         episode_body=text,
         source_description="kgr-memory",
-        reference_time=datetime.now(timezone.utc),
+        reference_time=when,
         source=EpisodeType.message,
         group_id=group_id,
     )
