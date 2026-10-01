@@ -1,6 +1,6 @@
 # Working on kgr-memory
 
-Griffith University project. Full spec is in [README.md](README.md). If you are picking this up, start with [HANDOVER.md](HANDOVER.md). Follow this file when writing or changing code.
+Griffith University 6005ICT project. Read [README.md](README.md) first. The assignment system is Graphiti plus a ReAct loop in this repo. The SQLite `add` / `query` path is the earlier prototype. Do not extend it.
 
 ## Principle
 
@@ -8,36 +8,27 @@ Start from the most basic thing. Get a tiny version working. Understand it. Then
 
 Do not introduce production, scalable, or framework-heavy design until the current module is understood as a small program.
 
-For each module:
-
-1. Bare minimum that can run end to end
-2. Check that the behaviour is clear
-3. Only then add the next piece
-
 If a change is not needed for the current step, do not add it.
 
-## Build order
+## What to work on
 
-Do not start a later module until the earlier one has a working baseline.
+1. **Graphiti on local Neo4j.** Call the installed `graphiti-core`. Do not edit the Graphiti checkout. `store` writes an episode. `search` returns fact edges and, when no edge was written, the episode text.
+2. **ReAct loop** in `kgr_memory/react.py`. The model returns whether the facts are enough, a next query, or an answer. `ask` stops at 10 rounds. One-shot is one search then the same answer step.
+3. **Chat** (`python -m kgr_memory chat`). The user talks to the model. The model decides whether to search and whether to store a durable fact. Chat search stops at 3 rounds. The page shows those calls.
 
-1. **Vector store** — embed whole utterances with OpenAI `text-embedding-3-small` (Mem0 default); store in SQLite; retrieve by brute-force cosine similarity
-2. **Knowledge graph** — `gpt-4o-mini` extracts triples into SQLite nodes/edges (negation = `not_*`); query is vector-seeded then 1-hop; print two lists, do not merge
-3. **Multi-turn memory query** — agent queries both stores in a loop; LLM scores whether it has enough (e.g. 1–10) and stops; hard max-round cap
+Live checks use a few short sentences in their own `--group`. Benchmark files are local only:
 
-Memory is local. Populate from conversation or a benchmark later. Design decisions live in [log.md](log.md) and [README.md](README.md); do not freeze abstractions around them.
+- `data/locomo/locomo10.json` — the full published LoCoMo set (10 conversations). There is no smaller official split. The chat button uses `kgr_memory/fixtures/locomo_session1_10.json` (10 turns).
+- `data/longmemeval/longmemeval_s_cleaned.json` — LongMemEval-S, 500 questions. Do not download the medium file for a first run.
 
-Each module may be extended after its baseline exists. Do not skip ahead to make the later module "ready".
+A timing run of 100 lines is not an accuracy score. LongMemEval’s published judge is `gpt-4o-2024-08-06` with the yes/no prompts in `data/longmemeval/evaluate_qa.py`, on all 500 questions. A `gpt-4o-mini` judge must be labelled as ours.
 
 ## While coding
 
-- Prefer a small Python script or package over a large layout
-- Prefer **SQLite** as the source of truth (utterances, embeddings, later graph triples)
-- Use OpenAI **`text-embedding-3-small`** for embeddings (Mem0’s default). Do not swap this without updating the README.
-- Prefer brute-force cosine over all SQLite vectors before Chroma, Pinecone, pgvector, or ANN indexes
-- Do not use CSV or process RAM as the durable store; RAM is only a cache if needed
-- Prefer one clear data path over abstractions "for later"
-- Keep the three modules separable so they can be understood alone
-- Latency vs accuracy is an explicit tradeoff; do not hide extra retrieval rounds
+- Models stay `openai/gpt-4o-mini` and `qwen/qwen3-embedding-8b` (4096-d) unless the README changes first
+- Do not commit `.env`, `data/*.sqlite3`, `data/locomo/*.json`, `data/longmemeval/*.json`, or `data/runs/`
+- Prefer one clear data path over abstractions for later
+- Latency and accuracy are both reported. Do not hide extra retrieval rounds
 
 ## Git
 
@@ -47,4 +38,4 @@ Each module may be extended after its baseline exists. Do not skip ahead to make
 
 ## Target behaviour
 
-The memory stack should help the agent answer with **correct, complete, and grounded** information. That matters most in high-stakes use, where the model must find the right memories instead of filling gaps.
+The memory stack should help the agent answer with **correct, complete, and grounded** information. The graph is a tool the model uses. The comparison is one search against a loop that may search again, on the same graph.

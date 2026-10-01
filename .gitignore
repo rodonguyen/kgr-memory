@@ -221,6 +221,7 @@ __marimo__/
 data/*.sqlite3
 data/*.db
 
-# LongMemEval dumps (download locally; do not commit)
+# Benchmark dumps (download locally; do not commit)
 data/longmemeval/*.json
+data/locomo/*.json
 data/runs/

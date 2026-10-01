@@ -11,7 +11,15 @@ python -m kgr_memory ask "Where do I live?" --group demo --mode react --prompt b
 python -m kgr_memory ask "Where do I live?" --group demo --mode oneshot
 ```
 
-Live checks use a few short sentences in their own `--group`. Do not point a test at the LongMemEval file until that small case is already working.
+Live checks use a few short sentences in their own `--group`. Do not point a test at a full benchmark file until that small case is already working.
+
+Benchmark files live under `data/` and are gitignored:
+
+| Set | Path | What it is |
+| --- | --- | --- |
+| LoCoMo | `data/locomo/locomo10.json` | The only published size: 10 conversations. No small/full split. |
+| LoCoMo slice | `kgr_memory/fixtures/locomo_session1_10.json` | First 10 turns of session 1, used by the chat button. |
+| LongMemEval-S | `data/longmemeval/longmemeval_s_cleaned.json` | Small-history setting, 500 questions. The medium file is not downloaded. |
 
 ```bash
 python -m kgr_memory chat
@@ -34,6 +42,8 @@ Build a hybrid memory system so an LLM agent can return **correct, complete, and
 The hoped-for gain is better recall, precision, and grounding. The expected cost is higher latency, because retrieval may take several turns.
 
 ## Architecture
+
+The assignment path is Graphiti on local Neo4j. The model searches that graph, decides whether the facts are enough, and may search again. The SQLite vector store and triple extractor below are the earlier prototype (`add` / `query`). Do not extend that prototype for the course comparison.
 
 Three modules, built in this order. Each starts at the bare minimum, then grows.
 
@@ -92,26 +102,32 @@ See [AGENTS.md](AGENTS.md) for how work on this repo should proceed.
 
 ## Current design decisions
 
-Working answers for this stage. Change them if a later module shows they are wrong.
+The assignment path is the first table. The SQLite rows are the earlier prototype only.
 
 | Question | Current answer |
 | --- | --- |
-| What is stored? | **Utterance** in the vector store. **Fact triples** in the graph (subject / object as nodes, predicate as edge). Unsure this split is final. |
-| Who writes the graph? | **`gpt-4o-mini` extracts** triples. `I` maps to the utterance `role`. Negation is `not_*`. Skip unresolved pronouns and intensifiers. |
-| Graph query entry? | **Vector-seeded.** Question → cosine utterances → edges on those ids → start nodes → 1-hop. Two printed lists; no fused rank. |
-| When does multi-turn stop? | The **LLM decides**, by reasoning and a score (e.g. 1–10). Always keep a hard max-round cap. |
-| Where does memory live? | **SQLite** (one local file). Not a CSV, not process RAM as the source of truth. PostgreSQL later if we outgrow SQLite. Wikidata / DBpedia can wait. |
-| Embeddings? | **Yes.** OpenAI [`text-embedding-3-small`](https://platform.openai.com/docs/models/text-embedding-3-small) (1536-d). Same default as [Mem0](https://docs.mem0.ai/components/embedders/models/openai). Store vectors in SQLite; query is brute-force cosine over all rows. |
+| Where does the assignment memory live? | **Neo4j** via Graphiti. Bolt `localhost:7687`, user `neo4j`. One `group_id` per conversation. |
+| Who writes and answers? | **`openai/gpt-4o-mini`** on OpenRouter. Embeddings are **`qwen/qwen3-embedding-8b`**, 4096 dimensions. |
+| What does a chat turn do? | The model decides. It searches when the answer depends on something already said. It stores only a durable personal fact, as one sentence, not every line. |
+| When does search stop? | JSON `{enough, next_query, answer}`. `ask` caps at **10** rounds. The chat page caps a search at **3**. `--prompt` is `strict`, `balanced`, or `loose` (the enough rule only). |
+| Benchmarks on disk | **LoCoMo** `data/locomo/locomo10.json` (10 conversations, the full published set). **LongMemEval-S** `data/longmemeval/longmemeval_s_cleaned.json` (500 questions). Neither file is committed. |
+
+Prototype (`add` / `query`), not the submitted graph:
+
+| Question | Prototype answer |
+| --- | --- |
+| What is stored? | **Utterance** in SQLite. **Fact triples** in the same file. |
+| Who writes the graph? | **`gpt-4o-mini` extracts** triples. Negation is `not_*`. |
+| Graph query entry? | **Vector-seeded** cosine, then 1-hop. Two lists, not merged. |
+| Embeddings? | OpenAI `text-embedding-3-small` (1536-d), Mem0’s old default. The assignment path does not use this. |
 
 ### Advice that can change
 
-- Splitting utterance vs triple is a good first cut: similarity over “what was said”, graph over “what is true”. If personal chat is too noisy for clean triples, we may store coarser nodes later.
-- LLM-extracted graphs will be messy (duplicate entities, bad relations). Fine at first; entity merging comes after a working extractor.
-- `add` writes the utterance **and** extracts triples. `ingest <id>` re-runs extraction for that row.
-- An LLM stop-score is easy to demo and easy to fool. Keep the max-round cap, and later we can log scores against actual recall/precision.
-- Local memory means we control the data and can measure grounding. A public KG is an enrichment step, not a starting point.
-- SQLite is the baseline store (utterances, vectors, later triples). Skip CSV. Skip a hosted vector DB. PostgreSQL / pgvector is an upgrade path, not v1.
-- `text-embedding-3-small` is an API cost/latency choice made to stay comparable with Mem0. A local embedder can replace it later without changing the SQLite schema.
+These notes are about the SQLite prototype, not the Graphiti path.
+
+- Splitting utterance vs triple is a good first cut: similarity over “what was said”, graph over “what is true”.
+- `add` writes the utterance and extracts triples. `ingest <id>` re-runs extraction for that row.
+- The assignment path does not use SQLite or `text-embedding-3-small`. Its embedder is `qwen/qwen3-embedding-8b`.
 
 ## Vector store (v1)
 
