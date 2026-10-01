@@ -165,6 +165,33 @@ def main() -> None:
         help="JSONL trace (gitignored under data/)",
     )
 
+    bench_p = sub.add_parser(
+        "bench-ingest",
+        help="write every raw line of one conversation or one question",
+        description=(
+            "Benchmark ingest. Separate from chat.\n"
+            "One LoCoMo sample_id, or one LongMemEval question_id, becomes one group. "
+            "Every line is stored as speaker: text with that session's date. "
+            "Nothing is paraphrased, and nothing is searched.\n\n"
+            "Examples:\n"
+            "  python -m kgr_memory bench-ingest locomo --id conv-26\n"
+            "  python -m kgr_memory bench-ingest longmemeval --id e47becba\n"
+            "  python -m kgr_memory bench-ingest longmemeval --id e47becba --group e47becba-v2"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    bench_p.add_argument("dataset", choices=("locomo", "longmemeval"))
+    bench_p.add_argument(
+        "--id",
+        required=True,
+        help="LoCoMo sample_id or LongMemEval question_id",
+    )
+    bench_p.add_argument(
+        "--group",
+        default=None,
+        help="graph partition; default is the id, so a new id keeps the previous ingest",
+    )
+
     chat_p = sub.add_parser(
         "chat",
         help="open a local page to talk to the model and watch memory calls",
@@ -182,7 +209,7 @@ def main() -> None:
 
         serve(args.port, args.host)
         return
-    if args.cmd in {"store", "search", "ask"}:
+    if args.cmd in {"store", "search", "ask", "bench-ingest"}:
         _graphiti_command(args)
         return
     if args.cmd == "add":
@@ -250,6 +277,14 @@ def _graphiti_command(args) -> None:
             if args.cmd == "store":
                 await add_text(graphiti, args.text, args.group, reference_time=args.at)
                 print(f"stored in group {args.group}")
+                return
+            if args.cmd == "bench-ingest":
+                from kgr_memory.benchmark import ingest_dataset
+
+                group, count = await ingest_dataset(
+                    graphiti, args.dataset, args.id, args.group
+                )
+                print(f"ingested {count} lines into group {group}")
                 return
             if args.cmd == "search":
                 facts, seconds = await search_facts(graphiti, args.text, args.group)

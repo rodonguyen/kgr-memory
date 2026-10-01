@@ -12,9 +12,10 @@ If a change is not needed for the current step, do not add it.
 
 ## What to work on
 
-1. **Graphiti on local Neo4j.** Call the installed `graphiti-core`. Do not edit the Graphiti checkout. `store` writes an episode. `search` returns fact edges and, when no edge was written, the episode text.
-2. **ReAct loop** in `kgr_memory/react.py`. The model returns whether the facts are enough, a next query, or an answer. `ask` stops at 10 rounds. One-shot is one search then the same answer step.
-3. **Chat** (`python -m kgr_memory chat`). The user talks to the model. The model decides whether to search and whether to store a durable fact. Chat search stops at 3 rounds. The page shows those calls.
+1. **Graphiti on local Neo4j.** Call the installed `graphiti-core`. Do not edit the Graphiti checkout. `store` writes an episode. Pass `--at` with the session date when the line is from a benchmark; chat turns have no session date and use the clock. `search` returns fact edges and, when no edge was written, the episode text.
+2. **Benchmark ingest** (`bench-ingest`) writes every raw `speaker: text` line of one LoCoMo conversation or one LongMemEval question into one `group_id`. It does not use the chat gate. A new `--group` keeps the previous ingest. `scripts/bench_utterances.py` is only the timing slice through chat.
+3. **ReAct loop** in `kgr_memory/react.py`. The model returns whether the facts are enough, a next query, or an answer. `ask` stops at 10 rounds. One-shot is one search then the same answer step.
+4. **Chat** (`python -m kgr_memory chat`). The user talks to the model. The model decides whether to search and whether to store a durable fact. Chat search stops at 3 rounds. The page shows those calls.
 
 Live checks use a few short sentences in their own `--group`. Benchmark files are local only:
 
