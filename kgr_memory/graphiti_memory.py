@@ -14,9 +14,15 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 from graphiti_core.nodes import EpisodeType
 from graphiti_core.search.search_config import (
+    EdgeReranker,
+    EdgeSearchConfig,
+    EdgeSearchMethod,
     EpisodeReranker,
     EpisodeSearchConfig,
     EpisodeSearchMethod,
+    NodeReranker,
+    NodeSearchConfig,
+    NodeSearchMethod,
     SearchConfig,
 )
 
@@ -129,40 +135,72 @@ async def add_text(
     )
 
 
-def facts_from_search(edges, episodes) -> list[Fact]:
-    """Fact edges first, then the stored sentence when extraction wrote no edge."""
+def _date_stamp(valid_at, invalid_at) -> str:
+    start = valid_at.isoformat() if valid_at else "date unknown"
+    end = invalid_at.isoformat() if invalid_at else "present"
+    return f"(valid {start}; invalid {end})"
+
+
+def memory_search_config(limit: int) -> SearchConfig:
+    """Edges, entity summaries, and episodes. Same RRF hybrid the one-shot path already used."""
+    return SearchConfig(
+        edge_config=EdgeSearchConfig(
+            search_methods=[EdgeSearchMethod.bm25, EdgeSearchMethod.cosine_similarity],
+            reranker=EdgeReranker.rrf,
+        ),
+        node_config=NodeSearchConfig(
+            search_methods=[NodeSearchMethod.bm25, NodeSearchMethod.cosine_similarity],
+            reranker=NodeReranker.rrf,
+        ),
+        episode_config=EpisodeSearchConfig(
+            search_methods=[EpisodeSearchMethod.bm25],
+            reranker=EpisodeReranker.rrf,
+        ),
+        limit=limit,
+    )
+
+
+def facts_from_search(edges, nodes, episodes) -> list[Fact]:
+    """Dated fact edges, then entity summaries, then the raw episode when it is not already listed."""
     facts: list[Fact] = []
     seen: set[str] = set()
+
+    def add(item_id: str, text: str) -> None:
+        if not text or text in seen:
+            return
+        seen.add(text)
+        facts.append(Fact(edge_id=item_id, text=text))
+
     for edge in edges:
-        text = getattr(edge, "fact", None)
-        if not text or text in seen:
+        fact = getattr(edge, "fact", None)
+        if not fact:
             continue
-        seen.add(text)
-        facts.append(Fact(edge_id=str(edge.uuid), text=text))
+        stamp = _date_stamp(getattr(edge, "valid_at", None), getattr(edge, "invalid_at", None))
+        add(str(edge.uuid), f"{fact} {stamp}")
+    for node in nodes:
+        name = (getattr(node, "name", None) or "").strip()
+        summary = (getattr(node, "summary", None) or "").strip()
+        if not name or not summary:
+            continue
+        add(str(node.uuid), f"{name}: {summary}")
     for episode in episodes:
-        text = getattr(episode, "content", None)
-        if not text or text in seen:
+        content = getattr(episode, "content", None)
+        if not content:
             continue
-        seen.add(text)
-        facts.append(Fact(edge_id=str(episode.uuid), text=text))
+        valid_at = getattr(episode, "valid_at", None)
+        text = content if valid_at is None else f"{content} (valid {valid_at.isoformat()})"
+        add(str(episode.uuid), text)
     return facts
 
 
-async def search_facts(graphiti, query: str, group_id: str, limit: int = 10) -> tuple[list[Fact], float]:
+async def search_facts(
+    graphiti, query: str, group_id: str, limit: int = 10
+) -> tuple[list[Fact], float]:
     started = time.perf_counter()
-    edges = await graphiti.search(query, group_ids=[group_id], num_results=limit)
-    episodes = (
-        await graphiti.search_(
-            query,
-            config=SearchConfig(
-                episode_config=EpisodeSearchConfig(
-                    search_methods=[EpisodeSearchMethod.bm25],
-                    reranker=EpisodeReranker.rrf,
-                ),
-                limit=limit,
-            ),
-            group_ids=[group_id],
-        )
-    ).episodes
+    results = await graphiti.search_(
+        query,
+        config=memory_search_config(limit),
+        group_ids=[group_id],
+    )
     elapsed = time.perf_counter() - started
-    return facts_from_search(edges, episodes), elapsed
+    return facts_from_search(results.edges, results.nodes, results.episodes), elapsed

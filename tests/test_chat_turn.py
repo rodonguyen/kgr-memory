@@ -9,6 +9,7 @@ from kgr_memory.react import Decision, Fact
 def test_episode_text_is_kept_when_there_is_no_fact_edge():
     facts = facts_from_search(
         [],
+        [],
         [SimpleNamespace(uuid="ep1", content="The user likes Thai food.")],
     )
     assert facts == [Fact("ep1", "The user likes Thai food.")]
