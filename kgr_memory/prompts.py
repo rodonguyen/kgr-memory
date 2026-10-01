@@ -7,8 +7,9 @@ from __future__ import annotations
 
 _CONTRACT = (
     "You control a knowledge-graph memory tool. "
-    "If enough is true, set next_query to null and put the answer in answer, using only the returned facts. "
-    "If enough is false, set answer to null and set next_query to a search string you have not already sent."
+    "Do not answer the question in this step. Set answer to null. "
+    "If enough is true, set next_query to null. "
+    "If enough is false, set next_query to a search string you have not already sent."
 )
 
 # Only the enough rule changes. The stop/continue contract above is shared.

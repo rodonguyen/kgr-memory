@@ -305,7 +305,7 @@ def _graphiti_command(args) -> None:
 
     from kgr_memory.graphiti_memory import add_text, build_graphiti, ensure_indices, search_facts
     from kgr_memory.live import answer_live, append_log, decide_live, result_record
-    from kgr_memory.react import AskResult, RoundLog, ask_react_async
+    from kgr_memory.react import ask_once_async, ask_react_async
 
     async def run():
         graphiti = build_graphiti()
@@ -348,28 +348,17 @@ def _graphiti_command(args) -> None:
                     print(f"[{fact.edge_id}] {fact.text}")
                 return
 
+            async def search(query: str):
+                return await search_facts(graphiti, query, args.group)
+
             if args.mode == "oneshot":
-                facts, seconds = await search_facts(graphiti, args.text, args.group)
-                result = AskResult(
-                    question=args.text,
+                result = await ask_once_async(
+                    args.text,
+                    search,
+                    answer_live,
                     prompt_name=args.prompt,
-                    mode="oneshot",
-                    answer=answer_live(args.text, facts),
-                    rounds=[
-                        RoundLog(
-                            round=1,
-                            query=args.text,
-                            facts=facts,
-                            search_seconds=seconds,
-                        )
-                    ],
-                    stopped_because="oneshot",
                 )
             else:
-
-                async def search(query: str):
-                    return await search_facts(graphiti, query, args.group)
-
                 result = await ask_react_async(
                     args.text,
                     search,

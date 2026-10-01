@@ -17,13 +17,33 @@ def test_react_stops_when_enough():
         return [Fact("e1", "Rodo lives in Brisbane")], 0.1
 
     def decide(question, facts, prompt_name, sent):
-        return Decision(enough=True, answer="Brisbane")
+        return Decision(enough=True, answer="from the decision prompt")
 
-    result = ask_react("Where does Rodo live?", search, decide, lambda q, f: "fallback")
+    result = ask_react(
+        "Where does Rodo live?",
+        search,
+        decide,
+        lambda q, f: "Brisbane",
+    )
     assert result.stopped_because == "enough"
     assert result.answer == "Brisbane"
     assert calls == ["Where does Rodo live?"]
     assert len(result.rounds) == 1
+
+
+def test_oneshot_and_react_share_the_answer_step():
+    def search(query):
+        return [Fact("e1", "Brisbane")], 0.0
+
+    def decide(question, facts, prompt_name, sent):
+        return Decision(enough=True, answer="from the decision prompt")
+
+    def answer(question, facts):
+        return f"{question}:{facts[0].text}"
+
+    once = ask_once("Where?", search, answer)
+    react = ask_react("Where?", search, decide, answer, max_rounds=2)
+    assert once.answer == react.answer == "Where?:Brisbane"
 
 
 def test_react_stops_when_the_next_query_repeats():

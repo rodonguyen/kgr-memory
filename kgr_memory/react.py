@@ -1,7 +1,8 @@
 """ReAct loop over a memory search tool.
 
 The model does not receive a fixed retrieval. Each round it sees the facts so far
-and returns whether they are enough, a next query, or an answer.
+and returns whether they are enough and, if not, a next query. The scored answer
+is written afterwards by the same answer function one-shot uses.
 """
 
 from __future__ import annotations
@@ -102,14 +103,13 @@ def _stop_or_continue(
     facts: list[Fact],
     answer: AnswerFn,
 ) -> tuple[str | None, str | None, str | None]:
-    """Return (final_answer, stop_reason, next_query). Continue when all three are unset except next_query."""
+    """Return (final_answer, stop_reason, next_query). The answer always comes from answer()."""
     if decision.enough or round_n == cap:
-        text = decision.answer or answer(question, facts)
-        return text, ("enough" if decision.enough else "cap"), None
+        reason = "enough" if decision.enough else "cap"
+        return answer(question, facts), reason, None
     nxt = (decision.next_query or "").strip()
     if not nxt or nxt in sent:
-        text = decision.answer or answer(question, facts)
-        return text, "no_new_query", None
+        return answer(question, facts), "no_new_query", None
     return None, None, nxt
 
 
